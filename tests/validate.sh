@@ -44,7 +44,7 @@ case "$*" in
   *"get nodes --no-headers"*) printf 'worker-a Ready\nworker-b Ready\nworker-c Ready\n'; exit 0 ;;
   *"create namespace "*)
     printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: logging\n'; exit 0 ;;
-  *"get crd elasticsearches.elasticsearch.k8s.elastic.co"*) exit 0 ;;
+  *"get crd elasticsearches.elasticsearch.k8s.elastic.co"*) [[ "${MOCK_ECK_MISSING:-0}" != 1 ]] ;;
   *"get secret "*) exit 0 ;;
   *"apply -f "*) 
     path="${!#}"
@@ -61,6 +61,8 @@ PATH="$tmp/mockbin:$PATH" TEST_APPLIED="$tmp/applied" "$tmp/installer.run" insta
 grep -q 'count: 3' "$tmp/applied/elasticsearch.yaml"
 grep -q 'elasticsearch:9.5.5-amd64' "$tmp/applied/elasticsearch.yaml"
 grep -q 'kubernetes.io/arch: amd64' "$tmp/applied/elasticsearch.yaml"
+PATH="$tmp/mockbin:$PATH" MOCK_ECK_MISSING=1 TEST_APPLIED="$tmp/applied" "$tmp/installer.run" install --namespace logging --storage-class mock-sc --skip-image-prepare -y
+grep -q 'eck-operator:3.5.0-amd64' "$tmp/applied/operator-internal.yaml"
 test -f "$tmp/applied/kibana.yaml"
 PATH="$tmp/mockbin:$PATH" "$tmp/installer.run" uninstall -n logging -y
 echo "PASS: assembler, CLI guards, offline payload extraction, mock installation and uninstall"
