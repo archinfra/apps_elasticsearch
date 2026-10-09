@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-VERSION=0.1.0
 ES_VERSION=9.5.5
 NAMESPACE=logging
 NAME=elasticsearch
