@@ -1,68 +1,61 @@
-[[ "$ACTION" =~ ^(install|status|uninstall|help)$ ]] || fail "Unknown action: $ACTION"
+[[ "$ACTION" =~ ^(install|status|uninstall|help)$ ]] || fail "Unknown action $ACTION"
 [[ "$ACTION" != help ]] || { usage; exit 0; }
+valid_name "$NAME" || fail "Invalid release name"
 valid_name "$NAMESPACE" || fail "Invalid namespace"
-valid_name "$NAME" || fail "Invalid Elasticsearch name"
-valid_registry "$REGISTRY" || fail "Invalid registry prefix"
+valid_registry "$REGISTRY" || fail "Invalid registry"
 [[ "$MODE" =~ ^(single|ha)$ ]] || fail "Mode must be single or ha"
-[[ "$PROFILE" =~ ^(lite|standard|large)$ ]] || fail "Invalid profile"
+[[ "$PROFILE" =~ ^(lite|standard|large)$ ]] || fail "Profile must be lite|standard|large"
+[[ -z "$STORAGE_CLASS" ]] || valid_class "$STORAGE_CLASS" || fail "Invalid StorageClass"
 [[ -z "$STORAGE_SIZE" ]] || valid_size "$STORAGE_SIZE" || fail "Invalid storage size"
-[[ -z "$STORAGE_CLASS" ]] || valid_storage_class "$STORAGE_CLASS" || fail "Invalid StorageClass"
-[[ -z "$COLLECTOR_SECRET" ]] || valid_name "$COLLECTOR_SECRET" || fail "Invalid collector Secret"
+[[ "$RETENTION" =~ ^[1-9][0-9]*$ ]] && ((RETENTION <= 3650)) || fail "retention-days must be 1..3650"
 if [[ -n "$REGISTRY_USER" || -n "$REGISTRY_PASSWORD_FILE" ]]; then
-  [[ -n "$REGISTRY_USER" && -r "$REGISTRY_PASSWORD_FILE" ]] || fail "Both --registry-user and readable --registry-password-file required"
+  [[ -n "$REGISTRY_USER" && -r "$REGISTRY_PASSWORD_FILE" ]] || fail "Provide --registry-user and readable --registry-password-file"
 fi
-if [[ "$COLLECTOR" == true ]]; then
-  [[ -n "$COLLECTOR_SECRET" ]] || fail "--enable-collector requires --collector-secret"
-fi
-if [[ "$MODE" == ha && "$PROFILE" == lite ]]; then fail "lite is a test profile and cannot be HA"; fi
+[[ "$MODE" != ha || "$PROFILE" != lite ]] || fail "HA with lite profile unsupported"
 case "$PROFILE" in
-  lite) REQUEST_CPU=500m; REQUEST_MEMORY=2Gi; LIMIT_CPU=1; LIMIT_MEMORY=4Gi; DEFAULT_STORAGE=30Gi ;;
-  standard) REQUEST_CPU=1; REQUEST_MEMORY=4Gi; LIMIT_CPU=2; LIMIT_MEMORY=8Gi; DEFAULT_STORAGE=100Gi ;;
-  large) REQUEST_CPU=2; REQUEST_MEMORY=8Gi; LIMIT_CPU=4; LIMIT_MEMORY=16Gi; DEFAULT_STORAGE=300Gi ;;
+  lite) REQUEST_CPU=500m; REQUEST_MEMORY=2Gi; LIMIT_CPU=1; LIMIT_MEMORY=4Gi; HEAP=2g; DEFAULT_STORAGE=30Gi ;;
+  standard) REQUEST_CPU=1; REQUEST_MEMORY=4Gi; LIMIT_CPU=2; LIMIT_MEMORY=8Gi; HEAP=4g; DEFAULT_STORAGE=100Gi ;;
+  large) REQUEST_CPU=2; REQUEST_MEMORY=8Gi; LIMIT_CPU=4; LIMIT_MEMORY=16Gi; HEAP=8g; DEFAULT_STORAGE=300Gi ;;
 esac
 STORAGE_SIZE="${STORAGE_SIZE:-$DEFAULT_STORAGE}"
 COUNT=1
 [[ "$MODE" != ha ]] || COUNT=3
 command -v kubectl >/dev/null || fail "kubectl is required"
-if [[ "$ACTION" == status ]]; then
-  kubectl -n "$NAMESPACE" get elasticsearch "$NAME"
-  kubectl -n "$NAMESPACE" get kibana "$NAME" --ignore-not-found
-  kubectl -n "$NAMESPACE" get daemonset archinfra-fluent-bit --ignore-not-found
-  exit 0
-fi
+command -v helm >/dev/null || fail "helm is required"
 confirm() {
-  [[ "$YES" == true ]] && return
-  local answer
-  read -r -p "Proceed with $ACTION in namespace $NAMESPACE (ES=$NAME)? [y/N] " answer
-  [[ "$answer" == y || "$answer" == Y ]] || fail "Cancelled"
+ [[ "$YES" == true ]] && return
+ local reply
+ read -r -p "Proceed with $ACTION release $NAME in $NAMESPACE? [y/N] " reply
+ [[ "$reply" == y || "$reply" == Y ]] || fail "Cancelled"
 }
+if [[ "$ACTION" == status ]]; then
+ helm -n "$NAMESPACE" status "$NAME"
+ kubectl -n "$NAMESPACE" get sts "$NAME-es"
+ kubectl -n "$NAMESPACE" get deploy "$NAME-kibana" "$NAME-exporter" --ignore-not-found
+ kubectl -n "$NAMESPACE" get ds "$NAME-fluent-bit" --ignore-not-found
+ exit 0
+fi
 if [[ "$ACTION" == uninstall ]]; then
-  confirm
-  kubectl -n "$NAMESPACE" delete daemonset archinfra-fluent-bit --ignore-not-found
-  kubectl -n "$NAMESPACE" delete configmap archinfra-fluent-bit --ignore-not-found
-  kubectl -n "$NAMESPACE" delete serviceaccount archinfra-fluent-bit --ignore-not-found
-  kubectl delete clusterrolebinding "$NAMESPACE-archinfra-fluent-bit" --ignore-not-found
-  kubectl delete clusterrole "$NAMESPACE-archinfra-fluent-bit" --ignore-not-found
-  kubectl -n "$NAMESPACE" delete kibana "$NAME" --ignore-not-found
-  kubectl -n "$NAMESPACE" delete elasticsearch "$NAME" --ignore-not-found
-  info "ECK Operator/CRDs retained. ES PVCs protected via DeleteOnScaledownOnly."
-  exit 0
+ confirm
+ helm -n "$NAMESPACE" uninstall "$NAME" --wait
+ info "PVCs, auth Secret and TLS Secret retained. No Operator."
+ exit 0
 fi
-[[ -n "$STORAGE_CLASS" ]] || fail "install requires --storage-class; no implicit NFS fallback"
-command -v tar >/dev/null || fail "tar is required"
-command -v sed >/dev/null || fail "sed is required"
-if [[ "$SKIP_IMAGES" == false ]]; then command -v docker >/dev/null || fail "docker required without --skip-image-prepare"; fi
+[[ -n "$STORAGE_CLASS" ]] || fail "install requires --storage-class; no implicit NFS"
+for cmd in tar od base64; do command -v "$cmd" >/dev/null || fail "$cmd is required"; done
+if [[ "$SKIP_IMAGES" == false ]]; then command -v docker >/dev/null || fail "Docker required for offline image import"; fi
 kubectl config current-context >&2
-kubectl get storageclass "$STORAGE_CLASS" >/dev/null || fail "StorageClass $STORAGE_CLASS not found"
+kubectl get storageclass "$STORAGE_CLASS" >/dev/null || fail "StorageClass not found: $STORAGE_CLASS"
 if [[ "$MODE" == ha ]]; then
-  ready="$(kubectl get nodes --no-headers | awk '$2 ~ /^Ready$/ {n++} END {print n+0}')"
-  [[ "$ready" -ge 3 ]] || fail "HA requires at least 3 Ready Kubernetes nodes"
+ ready="$(kubectl get nodes --no-headers | awk '$2 ~ /^Ready$/ {n++} END {print n+0}')"
+ ((ready >= 3)) || fail "HA requires 3 Ready nodes"
 fi
-if [[ "$COLLECTOR" == true ]]; then
-  kubectl -n "$NAMESPACE" get secret "$COLLECTOR_SECRET" >/dev/null || fail "Collector Secret missing in namespace $NAMESPACE"
-  for key in username password; do
-    value="$(kubectl -n "$NAMESPACE" get secret "$COLLECTOR_SECRET" -o "jsonpath={.data.$key}")"
-    [[ -n "$value" ]] || fail "Collector Secret must contain $key"
-  done
+if kubectl -n "$NAMESPACE" get sts "$NAME-es" >/dev/null 2>&1; then
+ current_count="$(kubectl -n "$NAMESPACE" get sts "$NAME-es" -o jsonpath='{.spec.replicas}')"
+ current_class="$(kubectl -n "$NAMESPACE" get sts "$NAME-es" -o jsonpath='{.spec.volumeClaimTemplates[0].spec.storageClassName}')"
+ current_size="$(kubectl -n "$NAMESPACE" get sts "$NAME-es" -o jsonpath='{.spec.volumeClaimTemplates[0].spec.resources.requests.storage}')"
+ [[ "$current_count" == "$COUNT" ]] || fail "Topology change requires planned migration"
+ [[ "$current_class" == "$STORAGE_CLASS" ]] || fail "StorageClass change requires data migration"
+ [[ "$current_size" == "$STORAGE_SIZE" ]] || fail "PVC resizing requires separate workflow"
 fi
 confirm
