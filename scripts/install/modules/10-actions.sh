@@ -6,7 +6,7 @@ valid_registry "$REGISTRY" || fail "Invalid registry prefix"
 [[ "$MODE" =~ ^(single|ha)$ ]] || fail "Mode must be single or ha"
 [[ "$PROFILE" =~ ^(lite|standard|large)$ ]] || fail "Invalid profile"
 [[ -z "$STORAGE_SIZE" ]] || valid_size "$STORAGE_SIZE" || fail "Invalid storage size"
-[[ -z "$STORAGE_CLASS" ]] || valid_name "$STORAGE_CLASS" || fail "Invalid StorageClass"
+[[ -z "$STORAGE_CLASS" ]] || valid_storage_class "$STORAGE_CLASS" || fail "Invalid StorageClass"
 [[ -z "$COLLECTOR_SECRET" ]] || valid_name "$COLLECTOR_SECRET" || fail "Invalid collector Secret"
 if [[ -n "$REGISTRY_USER" || -n "$REGISTRY_PASSWORD_FILE" ]]; then
   [[ -n "$REGISTRY_USER" && -r "$REGISTRY_PASSWORD_FILE" ]] || fail "Both --registry-user and readable --registry-password-file required"
