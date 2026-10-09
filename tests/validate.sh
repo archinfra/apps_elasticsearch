@@ -32,6 +32,7 @@ print("BOM and manifest checks passed")
 PY
 mkdir -p "$tmp/payload/operator" "$tmp/payload/images" "$tmp/payload/manifests" "$tmp/mockbin" "$tmp/applied"
 cp manifests/*.tmpl "$tmp/payload/manifests/"
+printf 'amd64\n' > "$tmp/payload/ARCH"
 printf 'operator mock\n' > "$tmp/payload/operator/crds.yaml"
 printf 'image: docker.elastic.co/eck/eck-operator:3.5.0\n' > "$tmp/payload/operator/operator.yaml"
 printf '# already-in-registry\n' > "$tmp/payload/images/index.tsv"
@@ -39,6 +40,7 @@ cat > "$tmp/mockbin/kubectl" <<'MOCK'
 #!/usr/bin/env bash
 set -e
 case "$*" in
+  *"get nodes -o jsonpath="*) printf 'amd64\namd64\namd64\n'; exit 0 ;;
   *"get nodes --no-headers"*) printf 'worker-a Ready\nworker-b Ready\nworker-c Ready\n'; exit 0 ;;
   *"create namespace "*)
     printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: logging\n'; exit 0 ;;
@@ -57,7 +59,8 @@ printf '\n__ARCHINFRA_PAYLOAD_BELOW__\n' >> "$tmp/installer.run"
 cat "$tmp/payload.tar.gz" >> "$tmp/installer.run"
 PATH="$tmp/mockbin:$PATH" TEST_APPLIED="$tmp/applied" "$tmp/installer.run" install --namespace logging --storage-class mock-sc --mode ha --skip-image-prepare -y
 grep -q 'count: 3' "$tmp/applied/elasticsearch.yaml"
-grep -q 'elasticsearch:9.5.5' "$tmp/applied/elasticsearch.yaml"
+grep -q 'elasticsearch:9.5.5-amd64' "$tmp/applied/elasticsearch.yaml"
+grep -q 'kubernetes.io/arch: amd64' "$tmp/applied/elasticsearch.yaml"
 test -f "$tmp/applied/kibana.yaml"
 PATH="$tmp/mockbin:$PATH" "$tmp/installer.run" uninstall -n logging -y
 echo "PASS: assembler, CLI guards, offline payload extraction, mock installation and uninstall"
