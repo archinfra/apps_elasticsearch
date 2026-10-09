@@ -1,0 +1,28 @@
+{{- if .Values.observability.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-grafana-dashboard
+  labels:
+    grafana_dashboard: "1"
+    grafana_folder: Middleware/Elasticsearch
+data:
+  archinfra-elasticsearch.json: |
+    {
+      "title": "Elasticsearch / Overview",
+      "uid": "archinfra-es-overview",
+      "schemaVersion": 41,
+      "version": 1,
+      "tags": ["archinfra","elasticsearch"],
+      "timezone": "browser",
+      "refresh": "30s",
+      "panels": [
+        {"id":1,"type":"stat","title":"Cluster Nodes","gridPos":{"x":0,"y":0,"w":6,"h":5},"targets":[{"expr":"elasticsearch_cluster_health_number_of_nodes","refId":"A"}]},
+        {"id":2,"type":"stat","title":"Unassigned Shards","gridPos":{"x":6,"y":0,"w":6,"h":5},"targets":[{"expr":"elasticsearch_cluster_health_unassigned_shards","refId":"A"}]},
+        {"id":3,"type":"stat","title":"Active Primary Shards","gridPos":{"x":12,"y":0,"w":6,"h":5},"targets":[{"expr":"elasticsearch_cluster_health_active_primary_shards","refId":"A"}]},
+        {"id":4,"type":"stat","title":"ES Exporter UP","gridPos":{"x":18,"y":0,"w":6,"h":5},"targets":[{"expr":"up{service=~\".*exporter.*\"}","refId":"A"}]},
+        {"id":5,"type":"timeseries","title":"Fluent Bit Output Errors","gridPos":{"x":0,"y":5,"w":12,"h":8},"targets":[{"expr":"sum(rate(fluentbit_output_errors_total[5m]))","refId":"A"}]},
+        {"id":6,"type":"timeseries","title":"Fluent Bit Retries","gridPos":{"x":12,"y":5,"w":12,"h":8},"targets":[{"expr":"sum(rate(fluentbit_output_retries_total[5m]))","refId":"A"}]}
+      ]
+    }
+{{- end }}

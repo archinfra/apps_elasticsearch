@@ -1,0 +1,19 @@
+{{- if and .Values.fluentBit.enabled .Values.observability.enabled .Values.observability.serviceMonitor (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor") }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-fluent-bit
+  labels:
+    monitoring.archinfra.io/stack: default
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: archinfra-fluent-bit
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  namespaceSelector:
+    matchNames: [{{ .Release.Namespace }}]
+  endpoints:
+    - port: metrics
+      path: /api/v1/metrics/prometheus
+      interval: 30s
+{{- end }}
