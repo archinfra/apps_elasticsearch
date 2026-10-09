@@ -1,105 +1,153 @@
-# archinfra/apps_elasticsearch
+# Archinfra Elasticsearch Logging Stack
 
-Kubernetes Elasticsearch / Kibana / Fluent Bit 私有化离线交付仓库。遵循 Archinfra 的 .run 单文件安装器、amd64/arm64 架构、镜像离线打包、统一 CLI 参数与监控治理路线。
+**v0.2.0 — 自维护 Helm Chart + 离线单文件 `.run`，完全不使用 ECK Operator。**
 
-## 当前基线
+适用于 Archinfra 中间件私有化交付。组件包括 Elasticsearch 9.5.5、Kibana 9.5.5、Fluent Bit 5.1.3、elasticsearch-exporter 1.11.0 和启动时权限初始化所需 curl 8.16.0。
 
-| 组件 | 版本 |
-| --- | --- |
-| Installer | 0.1.0 |
-| Elasticsearch | 9.5.5 |
-| Kibana | 9.5.5 |
-| Elastic Cloud on Kubernetes (ECK) | 3.5.0 |
-| Fluent Bit | 5.1.3 |
+## 交付范围
 
-仓库采用模块化脚本：scripts/install/modules/*.sh 是安装器真源，scripts/assemble-install.sh 用于生成 install.sh；build.sh 同时完成安装器组装、ECK 官方 CRD/Operator Manifest 打包、镜像离线 tar 封装和 SHA256 校验。
+| 模块 | Kubernetes 资源 | 默认行为 |
+| --- | --- | --- |
+| Elasticsearch | StatefulSet + PVC + ClusterIP/Headless Service | 1 节点；`--mode ha` 为 3 节点 |
+| Kibana | Deployment + ClusterIP Service | 开启，内部 HTTP，连 ES 使用 HTTPS + CA |
+| Fluent Bit | DaemonSet + ConfigMap + RBAC | 开启，CRI 日志、K8s 元数据、HTTPS、5G/节点缓冲上限 |
+| Elasticsearch Exporter | Deployment + Service | 开启，独立监控账号，Prometheus 9114 |
+| 安全与初始化 | Auth Secret、TLS Secret、Helm pre-upgrade Job | 随机密码、TLS CA/证书、最小权限用户 |
+| 索引管理 | Elasticsearch API Job | logs-k8s-* 模板、默认 14 天 ILM |
+| 监控发现 | ServiceMonitor / PrometheusRule（仅 CRD 已存在时） | 自动接入 Archinfra 的监控标签 |
 
-## 构建
+没有 Operator、没有自定义 CRD；不会安装 ECK，也不会要求最终环境拥有 `jq`、Python 或 curl。
 
-构建机需：bash、docker、curl、python3、tar、sha256sum。客户运行最终 .run 无需 Python、jq、curl、Helm。
+## 构建和产物
 
-    bash tests/validate.sh
-    bash build.sh --arch amd64
-    bash build.sh --arch arm64
+构建机需要：bash、Docker、Python 3、tar、sha256sum。GitHub Actions 分别构建两个架构，真正下载和打包官方容器镜像。
+
+```bash
+bash build.sh --arch amd64
+bash build.sh --arch arm64
+# 或 build.sh --arch all
+```
 
 产物：
 
-    dist/elasticsearch-installer-v0.1.0-amd64.run
-    dist/elasticsearch-installer-v0.1.0-amd64.run.sha256
-    dist/elasticsearch-installer-v0.1.0-arm64.run
-    dist/elasticsearch-installer-v0.1.0-arm64.run.sha256
+```text
+dist/elasticsearch-installer-v0.2.0-amd64.run
+dist/elasticsearch-installer-v0.2.0-amd64.run.sha256
+dist/elasticsearch-installer-v0.2.0-arm64.run
+dist/elasticsearch-installer-v0.2.0-arm64.run.sha256
+```
 
-GitHub Actions 的 Validate 在 push、PR 时运行模拟安装测试；Build Offline Run 在版本 tag 或手动 workflow_dispatch 时下载上游镜像并构建离线包。amd64 与 arm64 分别运行。
+每个 `.run` 内包含 Helm Chart、对应 CPU 架构的五个镜像 tar、离线 image-index.tsv 和安装逻辑。镜像目标 tag 带 `-amd64` 或 `-arm64`；工作负载的 `nodeSelector` 也限制架构。**当前不创建混合架构 multi-platform manifest**，混合架构 K8s 集群只在与安装包同架构的节点调度本套工作负载。
 
-## 部署
+## 安装
 
-所有安装均须显式指定现场可用 StorageClass，不默认选 NFS。请先检查 Kubernetes context。
+客户现场要求：helm、kubectl、bash、tar、od、base64；导入镜像时额外需要 Docker。helm 必须具备 StatefulSet、Secret、Namespace、RBAC 管理权限。
 
-    kubectl config current-context
-    kubectl get storageclass
-    ./elasticsearch-installer-v0.1.0-amd64.run help
+检查当前集群及 StorageClass：
 
-单节点实验环境（非 HA）：
+```bash
+kubectl config current-context
+kubectl get nodes -L kubernetes.io/arch
+kubectl get storageclass
+```
 
-    ./elasticsearch-installer-v0.1.0-amd64.run install \
-      --namespace logging \
-      --mode single \
-      --resource-profile lite \
-      --storage-class ceph-rbd \
-      -y
+**单节点开发环境：**
 
-三节点高可用基础形态（需至少 3 台可调度 Kubernetes Worker）：
+```bash
+./elasticsearch-installer-v0.2.0-amd64.run install \
+  --namespace logging \
+  --mode single \
+  --resource-profile lite \
+  --storage-class ceph-rbd \
+  -y
+```
 
-    ./elasticsearch-installer-v0.1.0-amd64.run install \
-      --namespace logging \
-      --mode ha \
-      --resource-profile standard \
-      --storage-class ceph-rbd \
-      --storage-size 100Gi \
-      -y
+**三节点日志平台：**
 
-ceph-rbd 只是示例，不是仓库默认值。首次安装会在没有 ECK CRD 时提交内置的 ECK 3.5.0 Manifest；如已有 ECK，则复用现有 Operator。所有 ES 和 Kibana 服务均默认 ClusterIP，ECK 管理 HTTPS 与安全凭据。安装器不会卸载共享 ECK CRD/Operator。
+```bash
+./elasticsearch-installer-v0.2.0-amd64.run install \
+  --namespace logging \
+  --mode ha \
+  --resource-profile standard \
+  --storage-class ceph-rbd \
+  --storage-size 100Gi \
+  --registry sealos.hub:5000/kube4 \
+  --retention-days 14 \
+  -y
+```
 
-默认目标镜像仓库为 sealos.hub:5000/kube4。已经预先上传镜像时，可传 --skip-image-prepare。需要 Registry 登录时，使用 --registry-user 和 --registry-password-file，避免把密码写在命令行里。
+`ceph-rbd` 只是示例。必须选择现场已经验证的持久化块存储，**不使用 NFS 默认值**。三节点模式需要至少三个目标架构 Ready 节点，且确保有足够可调度 Worker 节点。
 
-## Kibana 和状态
+如果客户的内网 Registry 已经同步五个镜像，可追加 `--skip-image-prepare`；Registry 登录使用 `--registry-user` 和 `--registry-password-file`，不写死任何固定凭据。默认 ClusterIP，不开放 NodePort。
 
-    ./elasticsearch-installer-v0.1.0-amd64.run status -n logging
-    kubectl -n logging get elasticsearch,kibana,pods,pvc
-    kubectl -n logging port-forward svc/elasticsearch-kb-http 5601:5601
-    kubectl -n logging get secret elasticsearch-es-elastic-user -o jsonpath='{.data.elastic}' | base64 -d
+### 为什么安装分两阶段
 
-## 可选 Fluent Bit 日志采集
+安装器先使用 Helm 创建 ES StatefulSet 和 TLS Secret，关闭其他组件，等待 ES Ready。然后通过 Helm pre-upgrade Job 调用 Elasticsearch API，创建：
 
-本仓库内置 Fluent Bit DaemonSet 模板，避免把日志采集硬塞进每个 MySQL、Redis、Nacos Pod。采集器默认关闭；开启时必须先为 ES 创建权限受限的日志写入用户，将用户名密码写入 logging Namespace 下的 Kubernetes Secret（键：username / password）。
+- `kibana_system` 密码；
+- `archinfra_log_writer` 仅对 `logs-k8s-*` 的写入权限；
+- `archinfra_metrics` 只读监控权限；
+- `archinfra-logs-retain` ILM 策略及日志 Index Template。
 
-    ./elasticsearch-installer-v0.1.0-amd64.run install \
-      --namespace logging \
-      --storage-class ceph-rbd \
-      --enable-collector \
-      --collector-secret elastic-log-writer \
-      -y
+第二阶段升级 Helm release 启用 Kibana、Fluent Bit、Exporter。这样首次安装时 Kibana 不会因为缺少系统用户密码而阻塞 ES 启动。
 
-采集器从 /var/log/containers 读取 CRI 日志，添加 Kubernetes 元数据，使用 ECK CA 验证 TLS，按 logs-k8s-* 写入索引。它不会使用 elastic 超管账户。**上线前需补齐索引生命周期/保留策略、敏感信息脱敏和采集链路压力测试**。详见 docs/LOGGING.md。
+### 资源规格（每个 ES Pod）
 
-## 资源规格
+| 档位 | Request CPU / Memory | Limit CPU / Memory | 默认 PVC | JVM Heap |
+| --- | --- | --- | --- | --- |
+| lite | 500m / 2Gi | 1C / 4Gi | 30Gi | 2g |
+| standard | 1C / 4Gi | 2C / 8Gi | 100Gi | 4g |
+| large | 2C / 8Gi | 4C / 16Gi | 300Gi | 8g |
 
-| profile | 单 ES 节点 CPU request/limit | 内存 request/limit | 默认 PVC |
-| --- | --- | --- | --- |
-| lite | 500m / 1 | 2Gi / 4Gi | 30Gi |
-| standard | 1 / 2 | 4Gi / 8Gi | 100Gi |
-| large | 2 / 4 | 8Gi / 16Gi | 300Gi |
+`--mode single` 为一节点非 HA；`--mode ha` 为三节点混合角色，严格跨节点反亲和。这些是初始资源规格，不等于已经验证的容量承诺。
 
-HA=3 个混合角色节点，严格跨主机反亲和；lite 不允许 HA。为避免安装器要求节点特权 sysctl，当前 node.store.allow_mmap=false；生产性能优化需按 ECK 官方要求配置宿主机 vm.max_map_count。
+## 日常管理
 
-## 卸载与安全
+```bash
+./elasticsearch-installer-v0.2.0-amd64.run status -n logging
+kubectl -n logging get sts,deploy,ds,pods,pvc
+kubectl -n logging port-forward svc/elasticsearch-kibana 5601:5601
+kubectl -n logging get secret elasticsearch-auth -o jsonpath='{.data.elastic-password}' | base64 -d
+```
 
-    ./elasticsearch-installer-v0.1.0-amd64.run uninstall -n logging -y
+浏览器访问 `http://127.0.0.1:5601`，用户 `elastic`，密码从 Secret 读取。Kibana 端口转发经 SSH/堡垒机保护，不建议随意直接发布公网入口。
 
-卸载只删除本仓库对应的 Elasticsearch/Kibana 和 Fluent Bit 资源，不删除共享 ECK Operator / CRD。Elasticsearch 使用 volumeClaimDeletePolicy: DeleteOnScaledownOnly，删除 ES CR 后保留 PVC。**保留 PVC 不是备份**，Snapshot 与恢复演练会在后续版本补齐。
+卸载：
 
-Elasticsearch / Kibana / ECK 属于 Elastic 许可体系，不应视作纯 Apache-2.0 发行包，正式商业再分发需复核授权。镜像目前按固定版本锁定；digest 签名与 SBOM 是后续供应链增强内容。
+```bash
+./elasticsearch-installer-v0.2.0-amd64.run uninstall --namespace logging -y
+```
 
-## 目前的交付边界
+默认保留 ES PVC、`<release>-auth` 和 `<release>-tls`。不支持自动毁灭数据的卸载参数。PVC 扩容、迁移 StorageClass、节点数量变更需要专门的变更/备份流程，不允许普通安装覆盖。
 
-0.1.0 是第一阶段可执行代码基线，GitHub Actions 的静态/模拟测试不等于真实 K8s E2E。正式上线前还需要：双架构真实安装测试、异构集群的多平台镜像 manifest、ES 指标监控/告警、索引生命周期、快照恢复和滚动升级压力测试。
+## 现阶段安全边界与后续验证
+
+- ES HTTP 和节点 Transport 都开启 TLS；Helm 初装创建 CA，后续升级复用同一份 Secret；证书有效期 3650 天，后续需要制定轮换策略。
+- Kibana 的 HTTP Service 是集群内端口 5601；对外访问应通过受控 Ingress/HTTPS 或 `kubectl port-forward`。
+- Fluent Bit 从 `/var/log/containers` 统一采集，使用文件系统缓冲；达到缓冲上限仍可能丢日志，需结合告警和磁盘规划。
+- 在高吞吐部署时需评估 ES ILM、索引/副本、每日写入量、堆使用率、存储水位和 K8s 真实故障恢复。
+- `node.store.allow_mmap=false` 避免强制宿主机设置 vm.max_map_count，但高负载生产集群建议进一步优化。
+- 自维护 Helm Chart 的首次安装和 CI 静态/模拟测试不等于真实三节点 HA、断网恢复、滚动升级以及跨节点容灾 E2E。
+- 尚未实现 Snapshot/Restore 自动编排；**PVC 保留不是备份**。
+- Elastic 软件许可及客户二次分发权利需独立审查。
+
+## 代码结构
+
+```text
+charts/elasticsearch/
+  Chart.yaml
+  values.yaml
+  templates/      # TLS, StatefulSet, Kibana, Fluent Bit, exporter, ILM bootstrap
+scripts/install/modules/
+  00-header.sh    # CLI / 默认值
+  10-actions.sh   # status / uninstall / preflight
+  20-install.sh   # 镜像离线准备 + 双阶段 Helm install
+scripts/assemble-install.sh
+images/image.json
+build.sh
+tests/validate.sh
+.github/workflows/build.yml
+.github/workflows/validate.yml
+```
+
+更多采集和保留说明见 `docs/LOGGING.md`。版本锁和来源见 `UPSTREAM.yaml`。
