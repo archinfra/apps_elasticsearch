@@ -56,7 +56,7 @@ PY
   out="$ROOT/dist/elasticsearch-installer-v$VERSION-$arch.run"
   payload="$ROOT/.build/payload-$arch.tar.gz"
   tar -C "$tmp" -czf "$payload" .
-  bash "$ROOT/scripts/assemble-install.sh" "$out"
+  cat "$ROOT/install.sh" > "$out"
   printf '\n__ARCHINFRA_PAYLOAD_BELOW__\n' >> "$out"
   cat "$payload" >> "$out"
   chmod +x "$out"
