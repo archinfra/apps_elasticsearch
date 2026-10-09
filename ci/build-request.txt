@@ -1,1 +1,1 @@
-v0.2.0 operator-free Helm, Elasticsearch/Kibana/Fluent Bit/Curl/Exporter real amd64 and arm64 image packaging
+v0.2.0 final offline build: native Helm ES Kibana Fluent Bit Exporter, Grafana, PDB, TLS, ILM; amd64 + arm64; 2026-10-09 final request
