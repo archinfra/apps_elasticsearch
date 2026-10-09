@@ -5,13 +5,17 @@ image:
   kibana: kibana
   fluentBit: fluent-bit
   curl: curl
+  exporter: elasticsearch-exporter
   tagElasticsearch: 9.5.5-amd64
   tagKibana: 9.5.5-amd64
   tagFluentBit: 5.1.3-amd64
   tagCurl: 8.16.0-amd64
+  tagExporter: 1.11.0-amd64
   pullPolicy: IfNotPresent
 auth:
   existingSecret: elasticsearch-auth
+bootstrap:
+  enabled: false
 elasticsearch:
   replicas: 1
   bootstrapCluster: true
@@ -21,7 +25,6 @@ elasticsearch:
   resources:
     requests: {cpu: 500m, memory: 2Gi}
     limits: {cpu: "1", memory: 4Gi}
-  initialDelaySeconds: 15
 kibana:
   enabled: true
   resources:
@@ -29,7 +32,7 @@ kibana:
     limits: {cpu: "1", memory: 2Gi}
 fluentBit:
   enabled: true
-  bufferSize: 5Gi
+  bufferSize: 5G
   resources:
     requests: {cpu: 50m, memory: 128Mi}
     limits: {cpu: 500m, memory: 512Mi}

@@ -1,16 +1,17 @@
-installer: 0.1.0
+installer: 0.2.0
+deployment: Helm StatefulSet Deployment DaemonSet (NO Operator)
 elasticsearch: 9.5.5
 kibana: 9.5.5
-eck: 3.5.0
 fluent_bit: 5.1.3
+curl: 8.16.0
+elasticsearch_exporter: 1.11.0
 sources:
   elasticsearch: docker.elastic.co/elasticsearch/elasticsearch:9.5.5
   kibana: docker.elastic.co/kibana/kibana:9.5.5
-  operator: docker.elastic.co/eck/eck-operator:3.5.0
   fluent_bit: ghcr.io/fluent/fluent-bit:5.1.3
-  eck_crds: https://download.elastic.co/downloads/eck/3.5.0/crds.yaml
-  eck_operator: https://download.elastic.co/downloads/eck/3.5.0/operator.yaml
+  curl: docker.io/curlimages/curl:8.16.0
+  exporter: docker.io/prometheuscommunity/elasticsearch-exporter:v1.11.0
 notes:
-  - Upstream manifests are fetched at build time and embedded in the offline installer.
-  - Redis/MySQL-style dual architecture packaging.
-  - Redistribute Elastic software only after applicable license review.
+  - Helm chart and platform-specific image tarballs are embedded into the offline .run.
+  - No ECK CRD or Operator is installed.
+  - Elastic products have license restrictions; review commercial redistribution.
