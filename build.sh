@@ -26,6 +26,7 @@ build_one() {
   mkdir -p "$tmp/operator" "$tmp/images" "$tmp/manifests"
   cp "$ROOT"/manifests/*.tmpl "$tmp/manifests/"
   printf '%s\n' "$VERSION" > "$tmp/VERSION"
+  printf '%s\n' "$arch" > "$tmp/ARCH"
   curl -fsSL --retry 3 -o "$tmp/operator/crds.yaml" https://download.elastic.co/downloads/eck/3.5.0/crds.yaml
   curl -fsSL --retry 3 -o "$tmp/operator/operator.yaml" https://download.elastic.co/downloads/eck/3.5.0/operator.yaml
   grep -Fq 'docker.elastic.co/eck/eck-operator:3.5.0' "$tmp/operator/operator.yaml" || {
