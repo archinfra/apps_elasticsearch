@@ -1,0 +1,27 @@
+name: Build Offline Run
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke test
+        run: bash tests/validate.sh
+      - name: Build offline installer
+        run: bash build.sh --arch ${{ matrix.arch }}
+      - name: Verify checksum
+        run: |
+          cd dist
+          sha256sum -c *.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elasticsearch-offline-${{ matrix.arch }}
+          path: dist/*
+          retention-days: 14
