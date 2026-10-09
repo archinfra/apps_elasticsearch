@@ -95,6 +95,8 @@ spec:
         app: archinfra-fluent-bit
     spec:
       serviceAccountName: archinfra-fluent-bit
+      nodeSelector:
+        kubernetes.io/arch: __ARCH__
       terminationGracePeriodSeconds: 60
       containers:
         - name: fluent-bit
