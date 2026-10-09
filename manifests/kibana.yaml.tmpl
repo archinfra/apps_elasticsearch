@@ -15,6 +15,8 @@ spec:
         type: ClusterIP
   podTemplate:
     spec:
+      nodeSelector:
+        kubernetes.io/arch: __ARCH__
       containers:
         - name: kibana
           resources:
