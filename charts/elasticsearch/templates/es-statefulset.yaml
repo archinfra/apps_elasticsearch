@@ -22,6 +22,8 @@ spec:
       app.kubernetes.io/instance: {{ .Release.Name }}
   template:
     metadata:
+      annotations:
+        archinfra.io/bootstrap-config: "{{ .Values.elasticsearch.bootstrapCluster }}"
       labels:
         app.kubernetes.io/name: archinfra-elasticsearch
         app.kubernetes.io/instance: {{ .Release.Name }}
