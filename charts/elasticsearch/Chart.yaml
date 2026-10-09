@@ -1,0 +1,6 @@
+apiVersion: v2
+name: archinfra-elasticsearch
+description: Operator-free Elasticsearch Kibana Fluent Bit logging stack
+type: application
+version: 0.2.0
+appVersion: 9.5.5
