@@ -4,6 +4,8 @@ cd "$(dirname "$0")/.."
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 bash -n build.sh scripts/assemble-install.sh scripts/install/modules/*.sh tests/validate.sh
+grep -Fq 'scripts/assemble-install.sh' build.sh
+if grep -Fq 'cat "$ROOT/install.sh"' build.sh; then echo 'build.sh depends on untracked install.sh' >&2; exit 1; fi
 bash scripts/assemble-install.sh "$tmp/installer.run"
 bash -n "$tmp/installer.run"
 "$tmp/installer.run" help | grep -q 'DeleteOnScaledownOnly'
