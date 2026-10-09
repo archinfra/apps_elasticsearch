@@ -1,0 +1,106 @@
+{{- if .Values.observability.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: archinfra-es-exporter
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: archinfra-es-exporter
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: {{ .Values.arch }}
+      containers:
+        - name: es-exporter
+          image: "{{ .Values.image.registry }}/{{ .Values.image.exporter }}:{{ .Values.image.tagExporter }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --es.uri=https://{{ include "archinfra.eshost" . }}:9200
+            - --es.ca=/tls/ca.crt
+            - --es.all
+            - --es.indices
+            - --es.shards
+          env:
+            - {name: ES_USERNAME, value: archinfra_metrics}
+            - name: ES_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: "{{ include "archinfra.auth" . }}", key: metrics-password}
+          ports:
+            - {name: metrics, containerPort: 9114}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 256Mi}
+          volumeMounts:
+            - {name: tls, mountPath: /tls, readOnly: true}
+      volumes:
+        - name: tls
+          secret: {secretName: "{{ include "archinfra.tls" . }}"}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-exporter
+  labels:
+    app.kubernetes.io/name: archinfra-es-exporter
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: archinfra-es-exporter
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - {name: metrics, port: 9114, targetPort: metrics}
+{{- if and .Values.observability.serviceMonitor (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor") }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Release.Name }}-logging
+  labels:
+    monitoring.archinfra.io/stack: default
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: archinfra-es-exporter
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  namespaceSelector:
+    matchNames: [{{ .Release.Namespace }}]
+  endpoints:
+    - {port: metrics, interval: 30s}
+{{- end }}
+{{- if and .Values.observability.prometheusRule (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/PrometheusRule") }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ .Release.Name }}-logging
+  labels:
+    monitoring.archinfra.io/stack: default
+spec:
+  groups:
+    - name: archinfra.elasticsearch
+      rules:
+        - alert: ArchinfraESExporterDown
+          expr: up{job=~".*{{ .Release.Name }}-exporter.*"} == 0
+          for: 5m
+          labels: {severity: critical}
+          annotations: {summary: Elasticsearch exporter is unreachable}
+        - alert: ArchinfraESClusterRed
+          expr: elasticsearch_cluster_health_status{color="red"} == 1
+          for: 5m
+          labels: {severity: critical}
+          annotations: {summary: Elasticsearch cluster health is red}
+        - alert: ArchinfraESUnassignedShards
+          expr: elasticsearch_cluster_health_unassigned_shards > 0
+          for: 10m
+          labels: {severity: warning}
+          annotations: {summary: Elasticsearch has unassigned shards}
+{{- end }}
+{{- end }}

@@ -1,4 +1,0 @@
-dist/
-.build/
-*.run
-*.run.sha256

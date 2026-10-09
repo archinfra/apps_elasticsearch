@@ -1,0 +1,78 @@
+{{- if .Values.bootstrap.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-bootstrap
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: archinfra-bootstrap
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/arch: {{ .Values.arch }}
+      containers:
+        - name: setup
+          image: "{{ .Values.image.registry }}/{{ .Values.image.curl }}:{{ .Values.image.tagCurl }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: ELASTIC_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: "{{ include "archinfra.auth" . }}", key: elastic-password}
+            - name: KIBANA_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: "{{ include "archinfra.auth" . }}", key: kibana-password}
+            - name: WRITER_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: "{{ include "archinfra.auth" . }}", key: writer-password}
+            - name: METRICS_PASSWORD
+              valueFrom:
+                secretKeyRef: {name: "{{ include "archinfra.auth" . }}", key: metrics-password}
+          command: [/bin/sh, -ec]
+          args:
+            - |
+              umask 077
+              BASE="https://{{ include "archinfra.eshost" . }}:9200"
+              # Credentials are passed through curl -K stdin, not command arguments or logs.
+              api() {
+                method="$1"
+                path="$2"
+                json="$3"
+                printf '%s' "$json" > /tmp/request.json
+                printf 'user = "elastic:%s"\n' "$ELASTIC_PASSWORD" |
+                  curl --config - --silent --show-error --fail --retry 12 --retry-all-errors --retry-delay 5 \
+                    --connect-timeout 5 --max-time 30 --cacert /tls/ca.crt \
+                    --header 'Content-Type: application/json' \
+                    --request "$method" --data-binary @/tmp/request.json \
+                    --output /dev/null "$BASE$path"
+              }
+              i=0
+              until printf 'user = "elastic:%s"\n' "$ELASTIC_PASSWORD" | curl --config - \
+                    --silent --show-error --fail --cacert /tls/ca.crt \
+                    --connect-timeout 5 --max-time 10 --output /dev/null "$BASE/_cluster/health"; do
+                i=$((i+1))
+                [ "$i" -lt 90 ] || exit 1
+                sleep 5
+              done
+              api POST '/_security/user/kibana_system/_password' "{\"password\":\"$KIBANA_PASSWORD\"}"
+              api PUT '/_security/role/archinfra_log_writer' '{"indices":[{"names":["logs-k8s-*"],"privileges":["create_index","auto_configure","write","create"]}]}'
+              api PUT '/_security/user/archinfra_log_writer' "{\"password\":\"$WRITER_PASSWORD\",\"roles\":[\"archinfra_log_writer\"]}"
+              api PUT '/_security/role/archinfra_metrics' '{"cluster":["monitor"],"indices":[{"names":["*"],"privileges":["monitor"]}]}'
+              api PUT '/_security/user/archinfra_metrics' "{\"password\":\"$METRICS_PASSWORD\",\"roles\":[\"archinfra_metrics\"]}"
+              api PUT '/_ilm/policy/archinfra-logs-retain' '{"policy":{"phases":{"delete":{"min_age":"{{ .Values.lifecycle.retentionDays }}d","actions":{"delete":{}}}}}}'
+              api PUT '/_index_template/archinfra-logs-k8s' '{"index_patterns":["logs-k8s-*"],"priority":200,"template":{"settings":{"index.lifecycle.name":"archinfra-logs-retain","index.number_of_shards":1,"index.number_of_replicas":{{ if gt (int .Values.elasticsearch.replicas) 1 }}1{{ else }}0{{ end }} }}}'
+              echo "Elasticsearch bootstrap complete (users, roles and ILM)."
+          volumeMounts:
+            - {name: tls, mountPath: /tls, readOnly: true}
+      volumes:
+        - name: tls
+          secret:
+            secretName: {{ include "archinfra.tls" . }}
+{{- end }}
