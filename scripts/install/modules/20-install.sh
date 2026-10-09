@@ -56,3 +56,4 @@ if [[ "$KIBANA" == true ]]; then kubectl -n "$NAMESPACE" get kibana "$NAME"; fi
 info "Status: $0 status -n $NAMESPACE --name $NAME"
 info "Kibana: kubectl -n $NAMESPACE port-forward svc/$NAME-kb-http 5601:5601"
 info "Password: kubectl -n $NAMESPACE get secret $NAME-es-elastic-user -o jsonpath='{.data.elastic}' | base64 -d"
+exit 0  # Do not interpret the embedded binary payload as shell source.
