@@ -1,0 +1,151 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: archinfra-fluent-bit
+  namespace: __NAMESPACE__
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: __NAMESPACE__-archinfra-fluent-bit
+rules:
+  - apiGroups: [""]
+    resources: [pods, namespaces]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: __NAMESPACE__-archinfra-fluent-bit
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: __NAMESPACE__-archinfra-fluent-bit
+subjects:
+  - kind: ServiceAccount
+    name: archinfra-fluent-bit
+    namespace: __NAMESPACE__
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: archinfra-fluent-bit
+  namespace: __NAMESPACE__
+data:
+  fluent-bit.conf: |
+    [SERVICE]
+        Flush                 2
+        Log_Level             info
+        Daemon                Off
+        storage.path          /buffers/storage
+        storage.sync          normal
+        storage.checksum      On
+        storage.max_chunks_up 128
+        HTTP_Server           On
+        HTTP_Listen           0.0.0.0
+        HTTP_Port             2020
+    [INPUT]
+        Name                  tail
+        Path                  /var/log/containers/*.log
+        Tag                   kube.*
+        multiline.parser      docker, cri
+        DB                    /buffers/tail.db
+        storage.type          filesystem
+        Read_from_Head        Off
+        Skip_Long_Lines       On
+        Refresh_Interval      5
+    [FILTER]
+        Name                  kubernetes
+        Match                 kube.*
+        Kube_Tag_Prefix       kube.var.log.containers.
+        Merge_Log             On
+        Keep_Log              On
+        Labels                Off
+        Annotations           Off
+    [OUTPUT]
+        Name                  es
+        Match                 kube.*
+        Host                  __ES_NAME__-es-http.__NAMESPACE__.svc
+        Port                  9200
+        TLS                   On
+        TLS.Verify            On
+        TLS.CA_File           /certs/ca.crt
+        HTTP_User             ${LOG_WRITER_USERNAME}
+        HTTP_Passwd           ${LOG_WRITER_PASSWORD}
+        Logstash_Format       On
+        Logstash_Prefix       logs-k8s
+        Suppress_Type_Name    On
+        Generate_ID           On
+        Retry_Limit           False
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: archinfra-fluent-bit
+  namespace: __NAMESPACE__
+  labels:
+    app: archinfra-fluent-bit
+spec:
+  selector:
+    matchLabels:
+      app: archinfra-fluent-bit
+  template:
+    metadata:
+      labels:
+        app: archinfra-fluent-bit
+    spec:
+      serviceAccountName: archinfra-fluent-bit
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: fluent-bit
+          image: __FLUENT_IMAGE__
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http-metrics
+              containerPort: 2020
+          env:
+            - name: LOG_WRITER_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: __WRITER_SECRET__
+                  key: username
+            - name: LOG_WRITER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: __WRITER_SECRET__
+                  key: password
+          resources:
+            requests:
+              cpu: 50m
+              memory: 100Mi
+            limits:
+              cpu: 500m
+              memory: 500Mi
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc/fluent-bit.conf
+              subPath: fluent-bit.conf
+              readOnly: true
+            - name: certs
+              mountPath: /certs
+              readOnly: true
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: buffers
+              mountPath: /buffers
+      volumes:
+        - name: config
+          configMap:
+            name: archinfra-fluent-bit
+        - name: certs
+          secret:
+            secretName: __ES_NAME__-es-http-certs-public
+        - name: varlog
+          hostPath:
+            path: /var/log
+            type: Directory
+        - name: buffers
+          hostPath:
+            path: /var/lib/archinfra/fluent-bit
+            type: DirectoryOrCreate
