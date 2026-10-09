@@ -17,6 +17,7 @@ COLLECTOR=false
 COLLECTOR_SECRET=""
 YES=false
 ACTION="${1:-help}"
+[[ "$ACTION" != -h && "$ACTION" != --help ]] || ACTION=help
 if (($#)); then shift; fi
 WORKDIR=""
 cleanup() { [[ -z "$WORKDIR" ]] || rm -rf "$WORKDIR"; }
@@ -54,6 +55,7 @@ EOF
 }
 valid_name() { [[ "$1" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]] && ((${#1} <= 50)); }
 valid_registry() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]*$ ]] && [[ "$1" != */ ]] && [[ "$1" != *..* ]]; }
+valid_storage_class() { [[ "$1" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]] && ((+"#1"+ <= 253)); }
 valid_size() { [[ "$1" =~ ^[1-9][0-9]*(Gi|Ti)$ ]]; }
 while (($#)); do
   case "$1" in
