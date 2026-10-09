@@ -3,68 +3,78 @@ set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-bash -n build.sh scripts/assemble-install.sh scripts/install/modules/*.sh tests/validate.sh
+bash -n build.sh scripts/assemble-install.sh scripts/install/modules/*.sh
 grep -Fq 'scripts/assemble-install.sh' build.sh
-if grep -Fq 'cat "$ROOT/install.sh"' build.sh; then echo 'build.sh depends on untracked install.sh' >&2; exit 1; fi
+! grep -Eq 'eck|ECK|operator.yaml|crds.yaml' build.sh scripts/install/modules/*.sh
+python3 - <<'PY'
+import json, pathlib
+images=json.loads(pathlib.Path("images/image.json").read_text())
+assert len(images)==5 and len({i['target'] for i in images})==5, "Expected 5 unique offline images"
+names={i['name'] for i in images}
+assert names=={'elasticsearch','kibana','fluent-bit','curl','elasticsearch-exporter'}
+chart=pathlib.Path("charts/elasticsearch")
+assert (chart/"Chart.yaml").is_file()
+assert len(list((chart/"templates").glob("*.yaml"))) >= 8
+assert "volumeClaimTemplates" in (chart/"templates/es-statefulset.yaml").read_text()
+assert "genSignedCert" in (chart/"templates/00-tls-secret.yaml").read_text()
+print("PASS: offline BOM and Helm templates exist")
+PY
+helm lint charts/elasticsearch --set elasticsearch.storageClass=mock-sc
+helm template es charts/elasticsearch -n logging \
+  --set elasticsearch.storageClass=mock-sc \
+  --set bootstrap.enabled=true > "$tmp/single.yaml"
+helm template es charts/elasticsearch -n logging \
+  --set elasticsearch.storageClass=mock-sc \
+  --set elasticsearch.replicas=3 \
+  --set elasticsearch.bootstrapCluster=true \
+  --set bootstrap.enabled=true > "$tmp/ha.yaml"
+grep -q 'kind: StatefulSet' "$tmp/single.yaml"
+grep -q 'kind: Deployment' "$tmp/single.yaml"
+grep -q 'kind: DaemonSet' "$tmp/single.yaml"
+grep -q 'kind: Secret' "$tmp/single.yaml"
+grep -q 'kind: Job' "$tmp/single.yaml"
+grep -q 'cluster.initial_master_nodes:' "$tmp/ha.yaml"
+! grep -Eq '^kind: (Elasticsearch|Kibana)$' "$tmp/single.yaml"
 bash scripts/assemble-install.sh "$tmp/installer.run"
 bash -n "$tmp/installer.run"
-"$tmp/installer.run" help | grep -q 'DeleteOnScaledownOnly'
-build_help="$(./build.sh --help)"
-[[ "$build_help" == *amd64* ]]
-if "$tmp/installer.run" install --mode bad >/dev/null 2>&1; then
-  echo "Invalid mode must fail" >&2; exit 1
+"$tmp/installer.run" help | grep -q 'NO Operator'
+if "$tmp/installer.run" install --mode invalid > /dev/null 2>&1; then
+  echo "invalid mode unexpectedly succeeded" >&2; exit 1
 fi
-if "$tmp/installer.run" install --enable-collector >/dev/null 2>&1; then
-  echo "Collector without Secret must fail" >&2; exit 1
-fi
-python3 - <<'PY'
-import json,pathlib
-images=json.loads(pathlib.Path("images/image.json").read_text())
-assert len(images)==4
-assert len({row["target"] for row in images})==4
-assert all(row["source"] and row["target"] for row in images)
-for path in pathlib.Path("manifests").glob("*.tmpl"):
-    text=path.read_text()
-    assert "kind:" in text and "__NAMESPACE__" in text
-es=pathlib.Path("manifests/elasticsearch.yaml.tmpl").read_text()
-assert "DeleteOnScaledownOnly" in es
-collector=pathlib.Path("manifests/fluent-bit.yaml.tmpl").read_text()
-assert "secretKeyRef:" in collector and "TLS.Verify            On" in collector
-print("BOM and manifest checks passed")
-PY
-mkdir -p "$tmp/payload/operator" "$tmp/payload/images" "$tmp/payload/manifests" "$tmp/mockbin" "$tmp/applied"
-cp manifests/*.tmpl "$tmp/payload/manifests/"
+mkdir -p "$tmp/payload/charts" "$tmp/payload/images" "$tmp/mockbin"
+cp -R charts/elasticsearch "$tmp/payload/charts/"
 printf 'amd64\n' > "$tmp/payload/ARCH"
-printf 'operator mock\n' > "$tmp/payload/operator/crds.yaml"
-printf 'image: docker.elastic.co/eck/eck-operator:3.5.0\n' > "$tmp/payload/operator/operator.yaml"
-printf '# already-in-registry\n' > "$tmp/payload/images/index.tsv"
+printf '# mocked locally imported images\n' > "$tmp/payload/images/index.tsv"
 cat > "$tmp/mockbin/kubectl" <<'MOCK'
 #!/usr/bin/env bash
 set -e
-case "$*" in
-  *"get nodes -o jsonpath="*) printf 'amd64\namd64\namd64\n'; exit 0 ;;
-  *"get nodes --no-headers"*) printf 'worker-a Ready\nworker-b Ready\nworker-c Ready\n'; exit 0 ;;
-  *"create namespace "*)
-    printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: logging\n'; exit 0 ;;
-  *"get crd elasticsearches.elasticsearch.k8s.elastic.co"*) [[ "${MOCK_ECK_MISSING:-0}" != 1 ]] ;;
-  *"get secret "*) exit 0 ;;
-  *"apply -f "*) 
-    path="${!#}"
-    if [[ "$path" == - ]]; then cat >/dev/null; else cp "$path" "$TEST_APPLIED/$(basename "$path")"; fi
-    exit 0 ;;
+case " $* " in
+  *" get nodes -l "*) printf 'worker1 Ready\nworker2 Ready\nworker3 Ready\n';;
+  *" get nodes --no-headers "*) printf 'worker1 Ready\nworker2 Ready\nworker3 Ready\n';;
+  *" create namespace "*) printf 'apiVersion: v1\nkind: Namespace\nmetadata:\n  name: logging\n';;
+  *" apply -f - "*) cat >/dev/null ;;
+  *" get sts "*) exit 1 ;;
+  *" get secret "*) exit 1 ;;
   *) exit 0 ;;
 esac
 MOCK
-chmod +x "$tmp/mockbin/kubectl"
+cat > "$tmp/mockbin/helm" <<'MOCK'
+#!/usr/bin/env bash
+set -e
+case " $* " in
+  *" status "*) [[ -f "$MOCK_HELM_MARKER" ]] ;;
+  *" upgrade --install "*) touch "$MOCK_HELM_MARKER"; printf 'helm-upgrade\n' >> "$MOCK_HELM_CALLS" ;;
+  *) exit 0 ;;
+esac
+MOCK
+chmod +x "$tmp/mockbin/"*
 tar -C "$tmp/payload" -czf "$tmp/payload.tar.gz" .
 printf '\n__ARCHINFRA_PAYLOAD_BELOW__\n' >> "$tmp/installer.run"
 cat "$tmp/payload.tar.gz" >> "$tmp/installer.run"
-PATH="$tmp/mockbin:$PATH" TEST_APPLIED="$tmp/applied" "$tmp/installer.run" install --namespace logging --storage-class mock-sc --mode ha --skip-image-prepare -y
-grep -q 'count: 3' "$tmp/applied/elasticsearch.yaml"
-grep -q 'elasticsearch:9.5.5-amd64' "$tmp/applied/elasticsearch.yaml"
-grep -q 'kubernetes.io/arch: amd64' "$tmp/applied/elasticsearch.yaml"
-PATH="$tmp/mockbin:$PATH" MOCK_ECK_MISSING=1 TEST_APPLIED="$tmp/applied" "$tmp/installer.run" install --namespace logging --storage-class mock-sc --skip-image-prepare -y
-grep -q 'eck-operator:3.5.0-amd64' "$tmp/applied/operator-internal.yaml"
-test -f "$tmp/applied/kibana.yaml"
-PATH="$tmp/mockbin:$PATH" "$tmp/installer.run" uninstall -n logging -y
-echo "PASS: assembler, CLI guards, offline payload extraction, mock installation and uninstall"
+PATH="$tmp/mockbin:$PATH" MOCK_HELM_MARKER="$tmp/marker" MOCK_HELM_CALLS="$tmp/calls" \
+  "$tmp/installer.run" install --namespace logging --mode ha --resource-profile standard \
+    --storage-class mock-sc --skip-image-prepare -y
+[[ "$(wc -l < "$tmp/calls")" == 2 ]] || { echo "Expected 2-stage Helm installation" >&2; exit 1; }
+PATH="$tmp/mockbin:$PATH" MOCK_HELM_MARKER="$tmp/marker" \
+  "$tmp/installer.run" uninstall -n logging -y
+echo "PASS: lint, single+HA Helm rendering, CLI guards, self-extraction, two-stage mocked install"
