@@ -1,0 +1,2 @@
+v0.1.0 initial offline payload build: amd64 + arm64
+Retry v0.1.0: restore installer assembler; verify full amd64/arm64 offline package output.

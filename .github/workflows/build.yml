@@ -1,0 +1,50 @@
+name: Build Offline Run
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - ci/build-request.txt
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke test
+        run: bash tests/validate.sh
+      - name: Build offline installer
+        run: bash build.sh --arch ${{ matrix.arch }}
+      - name: Verify checksum
+        run: |
+          cd dist
+          sha256sum -c *.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elasticsearch-offline-${{ matrix.arch }}
+          path: dist/*
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches VERSION
+        run: test "v$(cat VERSION)" = "$GITHUB_REF_NAME"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: elasticsearch-offline-*
+          path: dist
+          merge-multiple: true
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes

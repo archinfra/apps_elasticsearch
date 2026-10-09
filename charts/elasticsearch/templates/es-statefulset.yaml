@@ -1,0 +1,98 @@
+{{- if not .Values.elasticsearch.storageClass }}{{ fail "Elasticsearch requires an explicit StorageClass" }}{{ end }}
+{{- if and (gt (int .Values.elasticsearch.replicas) 1) (lt (int .Values.elasticsearch.replicas) 3) }}{{ fail "HA requires >=3 nodes; single node must use replicas=1" }}{{ end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "archinfra.esname" . }}
+  labels:
+    app.kubernetes.io/name: archinfra-elasticsearch
+    app.kubernetes.io/instance: {{ .Release.Name }}
+spec:
+  serviceName: {{ include "archinfra.headless" . }}
+  replicas: {{ .Values.elasticsearch.replicas }}
+  podManagementPolicy: Parallel
+  updateStrategy:
+    type: RollingUpdate
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: archinfra-elasticsearch
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: archinfra-elasticsearch
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      terminationGracePeriodSeconds: 120
+      nodeSelector:
+        kubernetes.io/arch: {{ .Values.arch }}
+      {{- if gt (int .Values.elasticsearch.replicas) 1 }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: archinfra-elasticsearch
+                  app.kubernetes.io/instance: {{ .Release.Name }}
+              topologyKey: kubernetes.io/hostname
+      {{- end }}
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: elasticsearch
+          image: "{{ .Values.image.registry }}/{{ .Values.image.elasticsearch }}:{{ .Values.image.tagElasticsearch }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          resources: {{ toYaml .Values.elasticsearch.resources | nindent 12 }}
+          env:
+            - name: ES_JAVA_OPTS
+              value: "-Xms{{ .Values.elasticsearch.heap }} -Xmx{{ .Values.elasticsearch.heap }}"
+            - name: ELASTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "archinfra.auth" . }}
+                  key: elastic-password
+          ports:
+            - name: https
+              containerPort: 9200
+            - name: transport
+              containerPort: 9300
+          startupProbe:
+            tcpSocket: {port: https}
+            failureThreshold: 90
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket: {port: https}
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket: {port: https}
+            periodSeconds: 20
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /usr/share/elasticsearch/data
+            - name: config
+              mountPath: /usr/share/elasticsearch/config/elasticsearch.yml
+              subPath: elasticsearch.yml
+              readOnly: true
+            - name: certs
+              mountPath: /usr/share/elasticsearch/config/certs
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "archinfra.esname" . }}-config
+        - name: certs
+          secret:
+            secretName: {{ include "archinfra.tls" . }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        storageClassName: {{ .Values.elasticsearch.storageClass | quote }}
+        accessModes: [ReadWriteOnce]
+        resources:
+          requests:
+            storage: {{ .Values.elasticsearch.storageSize | quote }}
