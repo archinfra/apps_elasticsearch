@@ -23,7 +23,7 @@ for cmd in docker python3 tar sha256sum; do command -v "$cmd" >/dev/null || { ec
 mkdir -p "$ROOT/dist" "$ROOT/.build"
 
 build_one() {
-  local arch="$1" tmp out payload name upstream target ref archive
+  local arch="$1" tmp out payload name upstream target ref archive actual_arch
   tmp="$(mktemp -d "$ROOT/.build/payload.XXXXXX")"
   mkdir -p "$tmp/charts" "$tmp/images"
   cp -R "$ROOT/charts/elasticsearch" "$tmp/charts/"
@@ -44,6 +44,8 @@ PY
     archive="$name-$arch.tar"
     echo "[build/$arch] pulling $upstream"
     docker pull --platform "linux/$arch" "$upstream"
+    actual_arch="$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$upstream")"
+    [[ "$actual_arch" == "linux/$arch" ]] || { echo "Wrong image platform: $upstream is $actual_arch, expected linux/$arch" >&2; return 1; }
     docker tag "$upstream" "$ref"
     docker save -o "$tmp/images/$archive" "$ref"
     printf '%s\t%s\t%s\n' "$archive" "$ref" "$target" >> "$tmp/images/index.tsv"

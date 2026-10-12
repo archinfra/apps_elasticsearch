@@ -1,6 +1,6 @@
 # Archinfra Elasticsearch Logging Stack
 
-**v0.2.0 — 自维护 Helm Chart + 离线单文件 `.run`，完全不使用 ECK Operator。**
+**v0.2.1 — 自维护 Helm Chart + 离线单文件 `.run`，完全不使用 ECK Operator。**
 
 适用于 Archinfra 中间件私有化交付。组件包括 Elasticsearch 9.5.5、Kibana 9.5.5、Fluent Bit 5.1.3、elasticsearch-exporter 1.11.0 和启动时权限初始化所需 curl 8.16.0。
 
@@ -22,6 +22,18 @@
 
 构建机需要：bash、Docker、Python 3、tar、sha256sum。GitHub Actions 分别构建两个架构，真正下载和打包官方容器镜像。
 
+v0.2.1 修复 Fluent Bit 缓冲上限配置位置，并增加交付门禁：使用原生 amd64/arm64 Runner 校验实际 Fluent Bit 镜像配置，确认旧错误配置被拒绝；读取成品 `.run` 内的五个镜像归档，核验平台、标签、镜像层和离线索引。全部通过后才上传 Artifact。手动构建可在 Actions → Build Offline Run → Run workflow 中发起。
+
+本地构建后的同等验证（另需 Helm、OpenSSL）：
+
+```bash
+bash tests/fluentbit-runtime.sh amd64
+python3 tests/verify-payload.py dist/elasticsearch-installer-v0.2.1-amd64.run --arch amd64
+(cd dist && sha256sum -c *.sha256)
+```
+
+运行镜像检查需要与镜像匹配的 CPU 架构；检查 arm64 时在原生 arm64 构建机执行并替换上述参数。详细排错见 `docs/BUILD_VALIDATION.md`。
+
 ```bash
 bash build.sh --arch amd64
 bash build.sh --arch arm64
@@ -31,10 +43,10 @@ bash build.sh --arch arm64
 产物：
 
 ```text
-dist/elasticsearch-installer-v0.2.0-amd64.run
-dist/elasticsearch-installer-v0.2.0-amd64.run.sha256
-dist/elasticsearch-installer-v0.2.0-arm64.run
-dist/elasticsearch-installer-v0.2.0-arm64.run.sha256
+dist/elasticsearch-installer-v0.2.1-amd64.run
+dist/elasticsearch-installer-v0.2.1-amd64.run.sha256
+dist/elasticsearch-installer-v0.2.1-arm64.run
+dist/elasticsearch-installer-v0.2.1-arm64.run.sha256
 ```
 
 每个 `.run` 内包含 Helm Chart、对应 CPU 架构的五个镜像 tar、离线 image-index.tsv 和安装逻辑。镜像目标 tag 带 `-amd64` 或 `-arm64`；工作负载的 `nodeSelector` 也限制架构。**当前不创建混合架构 multi-platform manifest**，混合架构 K8s 集群只在与安装包同架构的节点调度本套工作负载。
@@ -54,7 +66,7 @@ kubectl get storageclass
 **单节点开发环境：**
 
 ```bash
-./elasticsearch-installer-v0.2.0-amd64.run install \
+./elasticsearch-installer-v0.2.1-amd64.run install \
   --namespace logging \
   --mode single \
   --resource-profile lite \
@@ -65,7 +77,7 @@ kubectl get storageclass
 **三节点日志平台：**
 
 ```bash
-./elasticsearch-installer-v0.2.0-amd64.run install \
+./elasticsearch-installer-v0.2.1-amd64.run install \
   --namespace logging \
   --mode ha \
   --resource-profile standard \
@@ -104,7 +116,7 @@ kubectl get storageclass
 ## 日常管理
 
 ```bash
-./elasticsearch-installer-v0.2.0-amd64.run status -n logging
+./elasticsearch-installer-v0.2.1-amd64.run status -n logging
 kubectl -n logging get sts,deploy,ds,pods,pvc
 kubectl -n logging port-forward svc/elasticsearch-kibana 5601:5601
 kubectl -n logging get secret elasticsearch-auth -o jsonpath='{.data.elastic-password}' | base64 -d
@@ -115,7 +127,7 @@ kubectl -n logging get secret elasticsearch-auth -o jsonpath='{.data.elastic-pas
 卸载：
 
 ```bash
-./elasticsearch-installer-v0.2.0-amd64.run uninstall --namespace logging -y
+./elasticsearch-installer-v0.2.1-amd64.run uninstall --namespace logging -y
 ```
 
 默认保留 ES PVC、`<release>-auth` 和 `<release>-tls`。不支持自动毁灭数据的卸载参数。PVC 扩容、迁移 StorageClass、节点数量变更需要专门的变更/备份流程，不允许普通安装覆盖。

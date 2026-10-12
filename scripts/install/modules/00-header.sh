@@ -25,8 +25,8 @@ fail() { echo "[ERROR] $*" >&2; exit 1; }
 info() { echo "[archinfra/es] $*" >&2; }
 usage() {
 cat <<'EOF'
-Archinfra Elasticsearch Offline Toolkit 0.2.0 (Helm / NO Operator)
-Usage: elasticsearch-installer-v0.2.0-ARCH.run <install|status|uninstall|help> [options]
+Archinfra Elasticsearch Offline Toolkit 0.2.1 (Helm / NO Operator)
+Usage: elasticsearch-installer-v0.2.1-ARCH.run <install|status|uninstall|help> [options]
  -n, --namespace NS           default logging
      --name NAME              Helm release default elasticsearch
      --mode single|ha         1 or 3 nodes; default single
