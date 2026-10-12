@@ -11,8 +11,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [amd64, arm64]
-    runs-on: ubuntu-latest
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
@@ -22,6 +27,10 @@ jobs:
         run: bash tests/validate.sh
       - name: Build offline installer
         run: bash build.sh --arch ${{ matrix.arch }}
+      - name: Validate Fluent Bit with the native image
+        run: bash tests/fluentbit-runtime.sh ${{ matrix.arch }}
+      - name: Inspect embedded payload and image platforms
+        run: python3 tests/verify-payload.py "dist/elasticsearch-installer-v$(cat VERSION)-${{ matrix.arch }}.run" --arch ${{ matrix.arch }}
       - name: Verify checksum
         run: |
           cd dist
@@ -31,6 +40,8 @@ jobs:
           name: elasticsearch-offline-${{ matrix.arch }}
           path: dist/*
           retention-days: 14
+          compression-level: 0
+          if-no-files-found: error
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')

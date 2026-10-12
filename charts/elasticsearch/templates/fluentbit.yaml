@@ -48,7 +48,6 @@ data:
         multiline.parser      docker, cri
         DB                    /buffers/tail.db
         storage.type          filesystem
-        storage.total_limit_size {{ .Values.fluentBit.bufferSize }}
         Read_from_Head        Off
         Skip_Long_Lines       On
         Refresh_Interval      5
@@ -78,6 +77,7 @@ data:
         Suppress_Type_Name    On
         Generate_ID           On
         Retry_Limit           False
+        storage.total_limit_size {{ .Values.fluentBit.bufferSize }}
 ---
 apiVersion: v1
 kind: Service

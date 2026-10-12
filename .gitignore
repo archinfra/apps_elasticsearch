@@ -2,3 +2,4 @@ dist/
 .build/
 *.run
 *.run.sha256
+__pycache__/
